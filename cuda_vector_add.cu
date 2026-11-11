@@ -9,6 +9,10 @@
 
 static constexpr unsigned int THREADS_PER_BLOCK = 512;
 
+// Originally built with --use_fast_math; these kernels only use integer math.
+// Original size-limit note: 1_000_000_000 works, 10_000_000_000 does not work.
+// The three device arrays require 12 GB and 120 GB, respectively.
+
 static void check_cuda(cudaError_t error, const char* call, int line)
 {
   if (error != cudaSuccess) {
@@ -72,6 +76,11 @@ static bool verify_result(const int* device_result, size_t len,
 
 int main(int argc, char* argv[])
 {
+  ////////////
+  // set up
+  ////////////
+
+  // check command line
   if (argc != 2) {
     std::fprintf(stderr, "USAGE: %s positive_length_of_vectors\n", argv[0]);
     return EXIT_FAILURE;
@@ -111,6 +120,7 @@ int main(int argc, char* argv[])
   std::printf("CUDA Vector Add\nDevice: %s\nLength: %zu\nSeed: %u\n",
               properties.name, num, seed);
 
+  // allocate device memory
   int* d_vec1 = nullptr;
   int* d_vec2 = nullptr;
   int* d_result = nullptr;
@@ -118,35 +128,62 @@ int main(int argc, char* argv[])
   CUDA_CHECK(cudaMalloc(&d_vec2, bytes));
   CUDA_CHECK(cudaMalloc(&d_result, bytes));
 
+  //////////////////
+  // generate arrays
+  //////////////////
+
   cudaEvent_t start;
   cudaEvent_t stop;
   CUDA_CHECK(cudaEventCreate(&start));
   CUDA_CHECK(cudaEventCreate(&stop));
   float elapsed_ms = 0.0f;
 
+  // start time
   CUDA_CHECK(cudaEventRecord(start));
+
+  // execute timed code
   cuda_generate_arrays<<<block_count, THREADS_PER_BLOCK>>>(num, seed,
                                                           d_vec1, d_vec2);
+  // check kernel launch
   CUDA_CHECK(cudaGetLastError());
   CUDA_CHECK(cudaEventRecord(stop));
+  // call cudaEventSynchronize()
   // Check asynchronous execution errors as well as launch errors.
   CUDA_CHECK(cudaEventSynchronize(stop));
   CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
+
+  // print times
   std::printf("Generate: %.3f ms\n", elapsed_ms);
 
+  ///////////////
+  // add arrays
+  ///////////////
+
+  // start time
   CUDA_CHECK(cudaEventRecord(start));
+
+  // execute timed code
   cuda_vector_add<<<block_count, THREADS_PER_BLOCK>>>(num, d_vec1, d_vec2,
                                                      d_result);
+  // check kernel launch
   CUDA_CHECK(cudaGetLastError());
   CUDA_CHECK(cudaEventRecord(stop));
+  // call cudaEventSynchronize()
   CUDA_CHECK(cudaEventSynchronize(stop));
   CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
+
+  // print times
   std::printf("Add: %.3f ms\n", elapsed_ms);
 
+  // copy from GPU to CPU and verify
   const bool valid = verify_result(d_result, num, seed);
   if (valid) {
     std::printf("Verification passed for all %zu elements.\n", num);
   }
+
+  ////////////////
+  // clean up
+  ////////////////
 
   CUDA_CHECK(cudaEventDestroy(start));
   CUDA_CHECK(cudaEventDestroy(stop));
