@@ -1,0 +1,21 @@
+{
+  "env": {
+    "cudaToolkit": "/home/skapden/research/pysr-gpu-backend/.tools/cuda-13.2.0"
+  },
+  "configurations": [
+    {
+      "name": "Linux",
+      "compilerPath": "${cudaToolkit}/bin/nvcc",
+      "compilerArgs": [
+        "-arch=sm_86"
+      ],
+      "includePath": [
+        "${workspaceFolder}",
+        "${cudaToolkit}/include"
+      ],
+      "intelliSenseMode": "linux-gcc-x64",
+      "cppStandard": "c++17"
+    }
+  ],
+  "version": 4
+}
