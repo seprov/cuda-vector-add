@@ -1,58 +1,26 @@
 #include <algorithm>
 #include <cerrno>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
-#include <vector>
+#include <memory>
 #include <cuda_runtime.h>
-#include "kernels/cuda_vector_add.cu"
-#include "kernels/cuda_generate_arrays.cu"
+#include "cuda_check.cu"
+#include "composites/fused.cuh"
+#include "composites/split.cuh"
+
+// Keep compiling just this file; include the method implementations here.
+#include "husks/fused.cu"
+#include "husks/split.cu"
+#include "stubble_burning/fused.cu"
+#include "stubble_burning/split.cu"
 
 static constexpr unsigned int THREADS_PER_BLOCK = 512;
 
 // Originally built with --use_fast_math; these kernels only use integer math.
 // Original size-limit note: 1_000_000_000 works, 10_000_000_000 does not work.
-// The three device arrays require 12 GB and 120 GB, respectively.
-
-static void check_cuda(cudaError_t error, const char *call, int line)
-{
-  if (error != cudaSuccess)
-  {
-    std::fprintf(stderr, "CUDA error at line %d in %s: %s\n",
-                 line, call, cudaGetErrorString(error));
-    std::exit(EXIT_FAILURE);
-  }
-}
-
-#define CUDA_CHECK(call) check_cuda((call), #call, __LINE__)
-
-static bool verify_result(const int *device_result, size_t len,
-                          unsigned int seed)
-{
-  // Bound host memory use even when the device arrays are large.
-  std::vector<int> chunk(std::min(len, size_t(65536)));
-  for (size_t offset = 0; offset < len;)
-  {
-    const size_t count = std::min(chunk.size(), len - offset);
-    CUDA_CHECK(cudaMemcpy(chunk.data(), device_result + offset,
-                          count * sizeof(int), cudaMemcpyDeviceToHost));
-    for (size_t j = 0; j < count; ++j)
-    {
-      // Independent CPU reference; these products fit in 64 bits.
-      const std::uint64_t x = (offset + j) % 10000;
-      const int expected = static_cast<int>((seed * x) % 10000 + (seed * x * x) % 10000);
-      if (chunk[j] != expected)
-      {
-        std::fprintf(stderr, "Mismatch at index %zu: got %d, expected %d\n",
-                     offset + j, chunk[j], expected);
-        return false;
-      }
-    }
-    offset += count;
-  }
-  return true;
-}
+// In separate mode, the three device arrays require 12 GB and 120 GB, respectively.
 
 int main(int argc, char *argv[])
 {
@@ -61,19 +29,25 @@ int main(int argc, char *argv[])
   ////////////
 
   // check command line
-  if (argc != 2)
+  if ((argc != 2 && argc != 3) ||
+      (argc == 3 && std::strcmp(argv[2], "separate") != 0 &&
+                    std::strcmp(argv[2], "fused") != 0))
   {
-    std::fprintf(stderr, "USAGE: %s positive_length_of_vectors\n", argv[0]);
+    std::fprintf(stderr, "USAGE: %s positive_length_of_vectors [separate|fused]\n",
+                 argv[0]);
     return EXIT_FAILURE;
   }
+
+  const bool fused = argc == 3 && std::strcmp(argv[2], "fused") == 0;
+  const size_t array_count = fused ? 1 : 3;
 
   errno = 0;
   char *end = nullptr;
   const unsigned long long requested = std::strtoull(argv[1], &end, 10);
-  if (argv[1][0] < '0' || argv[1][0] > '9' || *end != '\0' || errno == ERANGE || requested == 0 || requested > std::numeric_limits<size_t>::max() / (3 * sizeof(int)))
+  if (argv[1][0] < '0' || argv[1][0] > '9' || *end != '\0' || errno == ERANGE || requested == 0 || requested > std::numeric_limits<size_t>::max() / (array_count * sizeof(int)))
   {
     std::fprintf(stderr, "ERROR: length must be a positive integer whose "
-                         "three arrays fit in the address space\n");
+                         "device arrays fit in the address space\n");
     return EXIT_FAILURE;
   }
 
@@ -86,11 +60,11 @@ int main(int argc, char *argv[])
   size_t free_bytes = 0;
   size_t total_bytes = 0;
   CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
-  if (3 * bytes > free_bytes)
+  if (array_count * bytes > free_bytes)
   {
-    std::fprintf(stderr, "ERROR: three arrays need %zu bytes; "
+    std::fprintf(stderr, "ERROR: device arrays need %zu bytes; "
                          "only %zu bytes of device memory are free\n",
-                 3 * bytes, free_bytes);
+                 array_count * bytes, free_bytes);
     return EXIT_FAILURE;
   }
 
@@ -100,64 +74,23 @@ int main(int argc, char *argv[])
       std::min(blocks_needed, size_t(properties.maxGridSize[0])));
   std::printf("CUDA Vector Add\nDevice: %s\nLength: %zu\nSeed: %u\n",
               properties.name, num, seed);
+  std::printf("Mode: %s\n", fused ? "fused" : "separate");
 
-  // allocate device memory
-  int *d_vec1 = nullptr;
-  int *d_vec2 = nullptr;
-  int *d_result = nullptr;
-  CUDA_CHECK(cudaMalloc(&d_vec1, bytes));
-  CUDA_CHECK(cudaMalloc(&d_vec2, bytes));
-  CUDA_CHECK(cudaMalloc(&d_result, bytes));
-
-  //////////////////
-  // generate arrays
-  //////////////////
-
-  cudaEvent_t start;
-  cudaEvent_t stop;
-  CUDA_CHECK(cudaEventCreate(&start));
-  CUDA_CHECK(cudaEventCreate(&stop));
-  float elapsed_ms = 0.0f;
-
-  // start time
-  CUDA_CHECK(cudaEventRecord(start));
-
-  // execute timed code
-  cuda_generate_arrays<<<block_count, THREADS_PER_BLOCK>>>(num, seed,
-                                                           d_vec1, d_vec2);
-  // check kernel launch
-  CUDA_CHECK(cudaGetLastError());
-  CUDA_CHECK(cudaEventRecord(stop));
-  // call cudaEventSynchronize()
-  // Check asynchronous execution errors as well as launch errors.
-  CUDA_CHECK(cudaEventSynchronize(stop));
-  CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
-
-  // print times
-  std::printf("Generate: %.3f ms\n", elapsed_ms);
-
-  ///////////////
-  // add arrays
-  ///////////////
-
-  // start time
-  CUDA_CHECK(cudaEventRecord(start));
-
-  // execute timed code
-  cuda_vector_add<<<block_count, THREADS_PER_BLOCK>>>(num, d_vec1, d_vec2,
-                                                      d_result);
-  // check kernel launch
-  CUDA_CHECK(cudaGetLastError());
-  CUDA_CHECK(cudaEventRecord(stop));
-  // call cudaEventSynchronize()
-  CUDA_CHECK(cudaEventSynchronize(stop));
-  CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
-
-  // print times
-  std::printf("Add: %.3f ms\n", elapsed_ms);
+  std::unique_ptr<Composite> obj;
+  if (fused)
+  {
+    obj = std::make_unique<FusedComposite>(num, seed, block_count,
+                                           THREADS_PER_BLOCK);
+  }
+  else
+  {
+    obj = std::make_unique<SplitComposite>(num, seed, block_count,
+                                           THREADS_PER_BLOCK);
+  }
+  obj->husk();
 
   // copy from GPU to CPU and verify
-  const bool valid = verify_result(d_result, num, seed);
+  const bool valid = obj->verify_result();
   if (valid)
   {
     std::printf("Verification passed for all %zu elements.\n", num);
@@ -167,10 +100,6 @@ int main(int argc, char *argv[])
   // clean up
   ////////////////
 
-  CUDA_CHECK(cudaEventDestroy(start));
-  CUDA_CHECK(cudaEventDestroy(stop));
-  CUDA_CHECK(cudaFree(d_vec1));
-  CUDA_CHECK(cudaFree(d_vec2));
-  CUDA_CHECK(cudaFree(d_result));
+  obj->stubble_burn();
   return valid ? EXIT_SUCCESS : EXIT_FAILURE;
 }
