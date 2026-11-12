@@ -7,9 +7,6 @@
 
 void SplitComposite::husk()
 {
-  // Allow this composite to run again without keeping the previous allocations.
-  stubble_burn();
-
   // allocate device memory
   CUDA_CHECK(cudaMalloc(&d_vec1_, bytes_));
   CUDA_CHECK(cudaMalloc(&d_vec2_, bytes_));

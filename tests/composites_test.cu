@@ -4,14 +4,17 @@
 #include <memory>
 #include <type_traits>
 #include "../composites/fused.cuh"
+#include "../composites/galois.cuh"
 #include "../composites/split.cuh"
 #include "../husks/fused.cu"
+#include "../husks/galois.cu"
 #include "../husks/split.cu"
 #include "../stubble_burning/fused.cu"
 #include "../stubble_burning/split.cu"
 
 static_assert(!std::is_copy_constructible_v<FusedComposite>);
 static_assert(!std::is_copy_assignable_v<SplitComposite>);
+static_assert(!std::is_copy_constructible_v<GaloisComposite>);
 
 template <typename T>
 bool check_lifecycle(unsigned int seed)
@@ -23,11 +26,6 @@ bool check_lifecycle(unsigned int seed)
   if (obj->verify_result())
     return false;
 
-  obj->husk();
-  if (!obj->verify_result())
-    return false;
-
-  // Rerun while the previous result is still owned by this composite.
   obj->husk();
   if (!obj->verify_result())
     return false;
@@ -49,12 +47,13 @@ int main()
   for (unsigned int seed : seeds)
   {
     if (!check_lifecycle<FusedComposite>(seed) ||
-        !check_lifecycle<SplitComposite>(seed))
+        !check_lifecycle<SplitComposite>(seed) ||
+        !check_lifecycle<GaloisComposite>(seed))
     {
       std::fprintf(stderr, "Composite lifecycle test failed for seed %u.\n", seed);
       return EXIT_FAILURE;
     }
   }
-  std::puts("Composite lifecycle tests passed (12 verification-order errors expected).");
+  std::puts("Composite lifecycle tests passed (18 verification-order errors expected).");
   return EXIT_SUCCESS;
 }

@@ -1,6 +1,7 @@
 {
   "env": {
-    "cudaToolkit": "/home/skapden/research/pysr-gpu-backend/.tools/cuda-13.2.0"
+    "cudaToolkit": "/home/skapden/research/pysr-gpu-backend/.tools/cuda-13.2.0",
+    "galoisRoot": "/home/skapden/research/Galois"
   },
   "configurations": [
     {
@@ -11,7 +12,8 @@
       ],
       "includePath": [
         "${workspaceFolder}",
-        "${cudaToolkit}/include"
+        "${cudaToolkit}/include",
+        "${galoisRoot}/libgpu/include"
       ],
       "intelliSenseMode": "linux-gcc-x64",
       "cppStandard": "c++17"

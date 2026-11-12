@@ -2,7 +2,7 @@
 
 #include "composite.cuh"
 
-class FusedComposite final : public Composite
+class FusedComposite : public Composite
 {
 public:
   using Composite::Composite;

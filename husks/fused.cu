@@ -6,9 +6,6 @@
 
 void FusedComposite::husk()
 {
-  // Allow this composite to run again without keeping the previous allocation.
-  stubble_burn();
-
   // allocate device memory
   CUDA_CHECK(cudaMalloc(&d_result_, bytes_));
 

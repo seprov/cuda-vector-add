@@ -8,10 +8,12 @@
 #include <cuda_runtime.h>
 #include "cuda_check.cu"
 #include "composites/fused.cuh"
+#include "composites/galois.cuh"
 #include "composites/split.cuh"
 
 // Keep compiling just this file; include the method implementations here.
 #include "husks/fused.cu"
+#include "husks/galois.cu"
 #include "husks/split.cu"
 #include "stubble_burning/fused.cu"
 #include "stubble_burning/split.cu"
@@ -31,15 +33,17 @@ int main(int argc, char *argv[])
   // check command line
   if ((argc != 2 && argc != 3) ||
       (argc == 3 && std::strcmp(argv[2], "separate") != 0 &&
-                    std::strcmp(argv[2], "fused") != 0))
+                    std::strcmp(argv[2], "fused") != 0 &&
+                    std::strcmp(argv[2], "galois") != 0))
   {
-    std::fprintf(stderr, "USAGE: %s positive_length_of_vectors [separate|fused]\n",
+    std::fprintf(stderr, "USAGE: %s positive_length_of_vectors [separate|fused|galois]\n",
                  argv[0]);
     return EXIT_FAILURE;
   }
 
   const bool fused = argc == 3 && std::strcmp(argv[2], "fused") == 0;
-  const size_t array_count = fused ? 1 : 3;
+  const bool galois = argc == 3 && std::strcmp(argv[2], "galois") == 0;
+  const size_t array_count = (fused || galois) ? 1 : 3;
 
   errno = 0;
   char *end = nullptr;
@@ -74,13 +78,18 @@ int main(int argc, char *argv[])
       std::min(blocks_needed, size_t(properties.maxGridSize[0])));
   std::printf("CUDA Vector Add\nDevice: %s\nLength: %zu\nSeed: %u\n",
               properties.name, num, seed);
-  std::printf("Mode: %s\n", fused ? "fused" : "separate");
+  std::printf("Mode: %s\n", fused ? "fused" : (galois ? "galois" : "separate"));
 
   std::unique_ptr<Composite> obj;
   if (fused)
   {
     obj = std::make_unique<FusedComposite>(num, seed, block_count,
                                            THREADS_PER_BLOCK);
+  }
+  else if (galois)
+  {
+    obj = std::make_unique<GaloisComposite>(num, seed, block_count,
+                                            THREADS_PER_BLOCK);
   }
   else
   {
