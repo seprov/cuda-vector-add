@@ -6,8 +6,8 @@
 #include <limits>
 #include <vector>
 #include <cuda_runtime.h>
-#include <kernels/cuda_vector_add.cu>
-#include <kernels/cuda_generate_arrays.cu>
+#include "kernels/cuda_vector_add.cu"
+#include "kernels/cuda_generate_arrays.cu"
 
 static constexpr unsigned int THREADS_PER_BLOCK = 512;
 
